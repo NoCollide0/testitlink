@@ -48,10 +48,12 @@ class NetworkMonitor {
             self?.isConnected = path.status == .satisfied
             self?.getConnectionType(path)
             
-            NotificationCenter.default.post(
-                name: .connectivityStatusChanged,
-                object: nil
-            )
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .connectivityStatusChanged,
+                    object: nil
+                )
+            }
         }
         monitor.start(queue: queue)
     }

@@ -25,8 +25,10 @@ class ImagesPresenter: ImagesPresenterProtocol {
         NotificationCenter.default.publisher(for: .connectivityStatusChanged)
             .sink { [weak self] _ in
                 let isConnected = NetworkMonitor.shared.isConnected
-                if isConnected && (self?.imageURLs.isEmpty ?? true) {
-                    self?.loadImagesFile()
+                if isConnected {
+                    if self?.imageURLs.isEmpty ?? true || self?.error != nil {
+                        self?.loadImagesFile()
+                    }
                 }
             }
             .store(in: &subscriptions)
@@ -34,6 +36,11 @@ class ImagesPresenter: ImagesPresenterProtocol {
     
     func loadImagesFile() {
         guard !isLoading else { return }
+        guard NetworkMonitor.shared.isConnected else {
+            error = "Нет подключения к интернету. Пожалуйста, проверьте соединение."
+            return
+        }
+        
         isLoading = true
         error = nil
         
@@ -131,3 +138,4 @@ class ImageViewModel: ObservableObject {
         cancellable?.cancel()
     }
 } 
+ 

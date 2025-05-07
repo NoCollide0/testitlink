@@ -17,10 +17,17 @@ struct ImageDetailView: View {
     //Для принудительного обновления предпросмотра
     @State private var previewUpdateCounter = 0
     
+    //Состояние анимации перелистывания
+    @State private var isAnimatingPage = false
+    
     var body: some View {
         GeometryReader { geometry in
             ZStack {
                 backgroundView
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        toggleNavBarIfNotZoomed()
+                    }
                 
                 if let image = viewModel.image {
                     ZStack {
@@ -33,8 +40,9 @@ struct ImageDetailView: View {
                                 updateCounter: previewUpdateCounter,
                                 geometry: geometry
                             )
-                            .opacity(draggingOffset > 0 ? min(draggingOffset / 100, 0.8) : 0)
-                            .offset(x: -geometry.size.width + draggingOffset)
+                            .opacity(draggingOffset > 0 ? min(draggingOffset / 100, 1.0) : 0)
+                            .offset(x: -geometry.size.width + max(0, draggingOffset))
+                            .zIndex(draggingOffset > 0 ? 1 : 0)
                         }
                         
                         //Текущее изображение
@@ -44,6 +52,7 @@ struct ImageDetailView: View {
                             .scaleEffect(presenter.scale)
                             .offset(x: presenter.scale <= 1.0 ? draggingOffset : imageOffset.width + dragOffset.width, 
                                     y: presenter.scale <= 1.0 ? 0 : imageOffset.height + dragOffset.height)
+                            .zIndex(1)
                             .gesture(
                                 DragGesture()
                                     .updating($dragOffset) { value, state, _ in
@@ -69,21 +78,50 @@ struct ImageDetailView: View {
                                             let maxOffsetHeight = (presenter.scale - 1.0) * geometry.size.height / 2
                                             imageOffset.height = min(maxOffsetHeight, max(-maxOffsetHeight, imageOffset.height))
                                         } else {
-                                            let threshold: CGFloat = 80
+                                            let threshold: CGFloat = 60
+                                            let velocity = value.predictedEndLocation.x - value.location.x
+                                            let isPaging = abs(draggingOffset) > threshold || abs(velocity) > 100
                                             
-                                            withAnimation(.spring()) {
-                                                if draggingOffset > threshold {
-                                                    presenter.previousImage()
-                                                    previewUpdateCounter += 1
-                                                } else if draggingOffset < -threshold {
-                                                    presenter.nextImage()
-                                                    previewUpdateCounter += 1
+                                            if isPaging {
+                                                isAnimatingPage = true
+                                                
+                                                let isNext = draggingOffset < 0 || velocity < -100
+                                                
+                                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                                    if !isNext {
+                                                        draggingOffset = geometry.size.width
+                                                    } else {
+                                                        draggingOffset = -geometry.size.width
+                                                    }
                                                 }
-                                                draggingOffset = 0
+                                                
+                                                //Чуть чуть костыльно, позаимствовал из своего старого пет проекта, ток потом увидел, мало времени на нормальное решение, но визуально выглядит даже не как костыль
+                                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                                    if !isNext {
+                                                        presenter.previousImage()
+                                                    } else {
+                                                        presenter.nextImage()
+                                                    }
+                                                    
+                                                    previewUpdateCounter += 1
+                                                    
+                                                    draggingOffset = 0
+                                                    
+                                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                                        isAnimatingPage = false
+                                                    }
+                                                }
+                                            } else {
+                                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                                    draggingOffset = 0
+                                                }
                                             }
                                         }
                                     }
                             )
+                            .onTapGesture {
+                                toggleNavBarIfNotZoomed()
+                            }
                         
                         if presenter.scale <= 1.0 && presenter.imageURLs.count > 1 {
                             let nextIndex = (presenter.currentImageIndex + 1) % presenter.imageURLs.count
@@ -93,8 +131,9 @@ struct ImageDetailView: View {
                                 updateCounter: previewUpdateCounter,
                                 geometry: geometry
                             )
-                            .opacity(draggingOffset < 0 ? min(-draggingOffset / 100, 0.8) : 0)
-                            .offset(x: geometry.size.width + draggingOffset)
+                            .opacity(draggingOffset < 0 ? min(-draggingOffset / 100, 1.0) : 0)
+                            .offset(x: geometry.size.width + min(0, draggingOffset))
+                            .zIndex(draggingOffset < 0 ? 1 : 0)
                         }
                     }
                     .gesture(
@@ -131,14 +170,7 @@ struct ImageDetailView: View {
                                 }
                             }
                     )
-                    .gesture(
-                        TapGesture()
-                            .onEnded {
-                                withAnimation {
-                                    presenter.isNavBarVisible.toggle()
-                                }
-                            }
-                    )
+                    .disabled(isAnimatingPage)
                 } else if viewModel.isLoading {
                     ProgressView("Загрузка...")
                 } else if viewModel.error != nil {
@@ -159,18 +191,19 @@ struct ImageDetailView: View {
                 }
                 
                 if presenter.isNavBarVisible {
-                    VStack {
+                    VStack(spacing: 0) {
                         //Навигационная панель
-                        ZStack {
-                            //Фон
+                        ZStack(alignment: .bottom) {
+                            //Фон, который тянется до верха экрана
                             Rectangle()
                                 .fill(colorScheme == .dark ? 
                                       Color.black.opacity(0.7) : 
                                       Color.white.opacity(0.7))
                                 .blur(radius: 3)
-                                .frame(height: 60)
                                 .frame(maxWidth: .infinity)
+                                .edgesIgnoringSafeArea(.top)
                             
+                            //Контент бара
                             HStack {
                                 //Кнопка назад
                                 Button(action: {
@@ -220,8 +253,11 @@ struct ImageDetailView: View {
                                 .padding(.trailing, 16)
                             }
                             .padding(.horizontal, 8)
+                            .frame(height: 60)
+                            .padding(.bottom, 0)
                         }
-                        .frame(height: 60)
+                        .frame(height: 60 + safeAreaInsets().top)
+                        .padding(.top, 0)
                         
                         Spacer()
                     }
@@ -239,6 +275,24 @@ struct ImageDetailView: View {
             imageOffset = .zero
             previewUpdateCounter += 1
         }
+    }
+    
+    //Безопасные отступы для устройства
+    private func safeAreaInsets() -> EdgeInsets {
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = windowScene.windows.first
+        else {
+            //Значения по умолчанию
+            return EdgeInsets(top: 47, leading: 0, bottom: 0, trailing: 0)
+        }
+        
+        let insets = window.safeAreaInsets
+        return EdgeInsets(
+            top: max(47, insets.top),
+            leading: insets.left,
+            bottom: insets.bottom,
+            trailing: insets.right
+        )
     }
     
     private var backgroundView: some View {
@@ -277,6 +331,15 @@ struct ImageDetailView: View {
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let rootViewController = windowScene.windows.first?.rootViewController {
             rootViewController.present(activityVC, animated: true, completion: nil)
+        }
+    }
+    
+    
+    private func toggleNavBarIfNotZoomed() {
+        if presenter.scale <= 1.0 {
+            withAnimation {
+                presenter.isNavBarVisible.toggle()
+            }
         }
     }
 }
